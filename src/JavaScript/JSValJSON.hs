@@ -39,6 +39,9 @@ module JavaScript.JSValJSON
   , _Array
   , array
   , withObject
+  , ObjectCursor
+  , objectCursorNew
+  , objectCursorNext
   , objectLookup
   , (.:)
   , (.:?)

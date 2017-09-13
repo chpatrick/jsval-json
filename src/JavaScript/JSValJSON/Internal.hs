@@ -5,6 +5,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RecordWildCards #-}
 module JavaScript.JSValJSON.Internal where
 
 import GHCJS.Types (JSVal, JSString, JSException)
@@ -17,6 +19,12 @@ import Control.Exception (try)
 import Data.Int (Int32)
 import Control.Applicative (Alternative)
 import qualified Data.Vector as V
+import qualified Data.HashMap.Strict as HMS
+import qualified Data.Map.Strict as Map
+import Data.Hashable (Hashable)
+import Data.Traversable (for)
+import qualified Data.Text as T
+import Data.JSString.Text
 
 type Value = JSVal
 newtype Object = Object {unObject :: Value}
@@ -40,7 +48,7 @@ class ToJSON a where
   toJSON :: a -> IO Value
 
 class FromJSONKey a where
-  fromJSONKey :: a -> Parser a
+  parseJSONKey :: JSString -> Parser a
 
 class ToJSONKey a where
   toJSONKey :: a -> IO JSString
@@ -187,6 +195,36 @@ withObject what cont val = do
   cont (Object val)
 foreign import javascript unsafe "$r = $1.constructor === Object" js_isObject :: Value -> Bool
 
+data ObjectCursor = ObjectCursor
+  { ocObject :: !JSVal
+  , ocKeys :: !JSVal
+  , ocLength :: !Int
+  , ocCursor :: !Int
+  }
+
+{-# INLINE objectCursorNew #-}
+objectCursorNew :: Object -> Parser ObjectCursor
+objectCursorNew (Object val) = liftIO $ do
+  let ocObject = val
+  ocKeys <- js_objectKeys val
+  ocLength <- round <$> js_arrayLength ocKeys
+  let ocCursor = 0
+  return ObjectCursor{..}
+foreign import javascript unsafe "$r = Object.keys($1)" js_objectKeys :: Value -> IO JSVal
+
+{-# INLINE objectCursorNext #-}
+objectCursorNext :: ObjectCursor -> Parser (Maybe (ObjectCursor, Pair))
+objectCursorNext oc = liftIO $ if ocCursor oc >= ocLength oc
+  then return Nothing
+  else do
+    -- TODO must these be strings?
+    k <- js_toString <$> js_arrayIndex (ocKeys oc) (fromIntegral (ocCursor oc))
+    v <- js_objectLookup (ocObject oc) k
+    return $ Just
+      ( oc{ ocCursor = ocCursor oc + 1 }
+      , (k, v)
+      )
+
 {-# INLINE objectLookup #-}
 objectLookup :: Object -> JSString -> Parser (Maybe Value)
 objectLookup (Object o) x = liftIO $ do
@@ -304,10 +342,11 @@ instance FromJSON () where
     {-# INLINE parseJSON #-}
 
 instance FromJSON Char where
-    parseJSON = withString "Char" $ \t ->
-                  if JSS.length t == 1
-                    then pure $ JSS.head t
-                    else fail "Expected a string of length 1"
+    parseJSON = withString "Char" $ \t -> do
+      let len = JSS.length t
+      if len == 1
+        then pure $ JSS.head t
+        else fail ("Expected a string of length 1, got " ++ show len ++ ": " ++ show (JSS.unpack t))
     {-# INLINE parseJSON #-}
 
 instance FromJSON Int32 where
@@ -331,6 +370,53 @@ instance FromJSON a => FromJSON (Maybe a) where
 
 instance FromJSON a => FromJSON (V.Vector a) where
   parseJSON = withArray "Vector" (arrayGenerate parseJSON V.generateM)
+  {-# INLINE parseJSON #-}
+
+instance FromJSON a => FromJSON [a] where
+  parseJSON = withArray "[]" (\x -> traverse parseJSON =<< arrayToList x)
+  {-# INLINE parseJSON #-}
+
+instance {-# OVERLAPPING #-} FromJSON [Char] where
+  parseJSON = withString "String" (return . JSS.unpack)
+  {-# INLINE parseJSON #-}
+
+instance FromJSON JSString where
+  parseJSON = withString "JSString" return
+  {-# INLINE parseJSON #-}
+
+instance FromJSON T.Text where
+  parseJSON = withString "Text" (return . textFromJSString)
+  {-# INLINE parseJSON #-}
+
+instance (Eq k, Hashable k, FromJSONKey k, FromJSON v) => FromJSON (HMS.HashMap k v) where
+  parseJSON = withObject "HashMap" $ \obj -> do
+    let
+      loop !curs = do
+        mbNext <- objectCursorNext curs
+        case mbNext of
+          Nothing -> return []
+          Just (curs', (kj, vj)) -> do
+            k <- parseJSONKey kj
+            v <- parseJSON vj
+            ((k, v) :) <$> loop curs'
+    curs <- objectCursorNew obj
+    HMS.fromList <$> loop curs
+  {-# INLINE parseJSON #-}
+
+instance (Ord k, FromJSONKey k, FromJSON v) => FromJSON (Map.Map k v) where
+  parseJSON = withObject "HashMap" $ \obj -> do
+    let
+      loop !curs = do
+        mbNext <- objectCursorNext curs
+        case mbNext of
+          Nothing -> return []
+          Just (curs', (kj, vj)) -> do
+            k <- parseJSONKey kj
+            v <- parseJSON vj
+            ((k, v) :) <$> loop curs'
+    curs <- objectCursorNew obj
+    Map.fromList <$> loop curs
+  {-# INLINE parseJSON #-}
 
 -- ToJSON
 -- --------------------------------------------------------------------
@@ -374,3 +460,57 @@ instance ToJSON a => ToJSON (Maybe a) where
 instance ToJSON a => ToJSON (V.Vector a) where
   toJSON x = array =<< traverse toJSON x
   {-# INLINE toJSON #-}
+
+instance ToJSON a => ToJSON [a] where
+  toJSON x = array =<< traverse toJSON x
+  {-# INLINE toJSON #-}
+
+instance {-# OVERLAPPING #-} ToJSON [Char] where
+  toJSON = return . _String . JSS.pack
+  {-# INLINE toJSON #-}
+
+instance ToJSON JSString where
+  toJSON = return . _String
+  {-# INLINE toJSON #-}
+
+instance ToJSON T.Text where
+  toJSON = return . _String . textToJSString
+  {-# INLINE toJSON #-}
+
+instance (Eq k, Hashable k, ToJSONKey k, ToJSON v) => ToJSON (HMS.HashMap k v) where
+  toJSON x = object (fmap (\(k, v) -> (,) <$> toJSONKey k <*> toJSON v) (HMS.toList x))
+  {-# INLINE toJSON #-}
+
+instance (Ord k, ToJSONKey k, ToJSON v) => ToJSON (Map.Map k v) where
+  toJSON x = object (fmap (\(k, v) -> (,) <$> toJSONKey k <*> toJSON v) (Map.toList x))
+  {-# INLINE toJSON #-}
+
+-- FromJSONKey
+-- --------------------------------------------------------------------
+
+instance FromJSONKey JSString where
+  parseJSONKey = return
+  {-# INLINE parseJSONKey #-}
+
+instance FromJSONKey String where
+  parseJSONKey = return . JSS.unpack
+  {-# INLINE parseJSONKey #-}
+
+instance FromJSONKey T.Text where
+  parseJSONKey = return . textFromJSString
+  {-# INLINE parseJSONKey #-}
+
+-- ToJSONKey
+-- --------------------------------------------------------------------
+
+instance ToJSONKey JSString where
+  toJSONKey = return
+  {-# INLINE toJSONKey #-}
+
+instance ToJSONKey String where
+  toJSONKey = return . JSS.pack
+  {-# INLINE toJSONKey #-}
+
+instance ToJSONKey T.Text where
+  toJSONKey = return . textToJSString
+  {-# INLINE toJSONKey #-}
