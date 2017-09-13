@@ -32,9 +32,11 @@ module JavaScript.JSValJSON
   , withString
   , _String
   , withArray
+  , withEmptyArray
   , arrayGenerate
   , arrayToList
   , arrayLength
+  , arrayUnsafeIndex
   , mkArray
   , _Array
   , array
@@ -43,6 +45,8 @@ module JavaScript.JSValJSON
   , objectCursorNew
   , objectCursorNext
   , objectLookup
+  , objectLookup_
+  , objectToList
   , (.:)
   , (.:?)
   , (.:!)

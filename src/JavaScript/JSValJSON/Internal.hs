@@ -22,7 +22,6 @@ import qualified Data.Vector as V
 import qualified Data.HashMap.Strict as HMS
 import qualified Data.Map.Strict as Map
 import Data.Hashable (Hashable)
-import Data.Traversable (for)
 import qualified Data.Text as T
 import Data.JSString.Text
 
@@ -135,6 +134,14 @@ withArray what cont val = do
   cont (Array val)
 foreign import javascript unsafe "$r = $1.constructor === Array" js_isArray :: Value -> Bool
 
+{-# INLINE withEmptyArray #-}
+withEmptyArray :: String -> Parser a -> Value -> Parser a
+withEmptyArray what cont val = do
+  checkType what "array" (js_isArray val)
+  len <- liftIO (js_arrayLength val)
+  checkType what "empty array" (len == 0)
+  cont
+
 {-# INLINE arrayGenerate #-}
 arrayGenerate ::
      (Value -> Parser a)
@@ -164,6 +171,10 @@ arrayToList (Array val) = liftIO $ do
 arrayLength :: Array -> Parser Int
 arrayLength (Array val) = round <$> liftIO (js_arrayLength val)
 
+{-# INLINE arrayUnsafeIndex #-}
+arrayUnsafeIndex :: Array -> Int -> Parser Value
+arrayUnsafeIndex (Array val) ix = liftIO (js_arrayIndex val (fromIntegral ix))
+
 {-# INLINE mkArray #-}
 mkArray :: Foldable t => t Value -> IO Array
 mkArray xs0 = do
@@ -185,8 +196,8 @@ _Array :: Array -> Value
 _Array (Array v) = v
 
 {-# INLINE array #-}
-array :: Foldable t => t Value -> IO Value
-array = fmap _Array . mkArray
+array :: Traversable t => t (IO Value) -> IO Value
+array x = fmap _Array (mkArray =<< sequenceA x)
 
 {-# INLINE withObject #-}
 withObject :: String -> (Object -> Parser a) -> Value -> Parser a
@@ -225,6 +236,19 @@ objectCursorNext oc = liftIO $ if ocCursor oc >= ocLength oc
       , (k, v)
       )
 
+{-# INLINE objectToList #-}
+objectToList :: Object -> Parser [Pair]
+objectToList obj = do
+  let
+    loop !curs = do
+      mbNext <- objectCursorNext curs
+      case mbNext of
+        Nothing -> return []
+        Just (curs', (kj, vj)) -> do
+          ((kj, vj) :) <$> loop curs'
+  curs <- objectCursorNew obj
+  loop curs
+
 {-# INLINE objectLookup #-}
 objectLookup :: Object -> JSString -> Parser (Maybe Value)
 objectLookup (Object o) x = liftIO $ do
@@ -235,13 +259,17 @@ objectLookup (Object o) x = liftIO $ do
 foreign import javascript unsafe "$r = $1 === undefined" js_isUndefined :: Value -> Bool
 foreign import javascript unsafe "$r = $1[$2]" js_objectLookup :: Value -> JSString -> IO Value
 
-{-# INLINE (.:) #-}
-(.:) :: FromJSON a => Object -> JSString -> Parser a
-obj .: label = do
+{-# INLINE objectLookup_ #-}
+objectLookup_ :: Object -> JSString -> Parser Value
+objectLookup_ obj label = do
   mbX <- objectLookup obj label
   case mbX of
     Nothing -> fail ("Could not find key " ++ JSS.unpack label)
-    Just x -> parseJSON x
+    Just x -> return x
+
+{-# INLINE (.:) #-}
+(.:) :: FromJSON a => Object -> JSString -> Parser a
+obj .: label = parseJSON =<< objectLookup_ obj label
 
 {-# INLINE (.:?) #-}
 (.:?) :: FromJSON a => Object -> JSString -> Parser (Maybe a)
@@ -268,14 +296,13 @@ _Object (Object x) = x
 type Pair = (JSString, Value)
 
 {-# INLINE mkObject #-}
-mkObject :: Foldable t => t (IO Pair) -> IO Object
+mkObject :: Foldable t => t Pair -> IO Object
 mkObject xs0 = do
   val <- js_objectEmpty
   let
     loop = \case
       [] -> return ()
-      mpair : xs -> do
-        (label, x) <- mpair
+      (label, x) : xs -> do
         js_objectSet val label x
         loop xs
   loop (toList xs0)
@@ -285,8 +312,8 @@ foreign import javascript unsafe "$1[$2] = $3" js_objectSet :: Value -> JSString
 foreign import javascript unsafe "$r = {}" js_objectEmpty :: IO Value
 
 {-# INLINE object #-}
-object :: Foldable t => t (IO Pair) -> IO Value
-object = fmap _Object . mkObject
+object :: Traversable t => t (IO Pair) -> IO Value
+object x = fmap _Object (mkObject =<< sequenceA x)
 
 {-# INLINE (.=) #-}
 (.=) :: (ToJSONKey k, ToJSON v) => k -> v -> IO Pair
@@ -418,6 +445,15 @@ instance (Ord k, FromJSONKey k, FromJSON v) => FromJSON (Map.Map k v) where
     Map.fromList <$> loop curs
   {-# INLINE parseJSON #-}
 
+instance (FromJSON a, FromJSON b) => FromJSON (Either a b) where
+  parseJSON = withObject "Either" $ \obj -> do
+    els <- objectToList obj
+    case els of
+      [("Left", v)] -> Left <$> parseJSON v
+      [("Right", v)] -> Right <$> parseJSON v
+      _ -> fail "Expecting object with single Left/Right key"
+  {-# INLINE parseJSON #-}
+
 -- ToJSON
 -- --------------------------------------------------------------------
 
@@ -458,11 +494,11 @@ instance ToJSON a => ToJSON (Maybe a) where
   {-# INLINE toJSON #-}
 
 instance ToJSON a => ToJSON (V.Vector a) where
-  toJSON x = array =<< traverse toJSON x
+  toJSON x = array (fmap toJSON x)
   {-# INLINE toJSON #-}
 
 instance ToJSON a => ToJSON [a] where
-  toJSON x = array =<< traverse toJSON x
+  toJSON x = array (map toJSON x)
   {-# INLINE toJSON #-}
 
 instance {-# OVERLAPPING #-} ToJSON [Char] where
@@ -485,6 +521,12 @@ instance (Ord k, ToJSONKey k, ToJSON v) => ToJSON (Map.Map k v) where
   toJSON x = object (fmap (\(k, v) -> (,) <$> toJSONKey k <*> toJSON v) (Map.toList x))
   {-# INLINE toJSON #-}
 
+instance (ToJSON a, ToJSON b) => ToJSON (Either a b) where
+  toJSON = \case
+    Left x -> object [("Left"::JSString) .= x]
+    Right x -> object [("Right"::JSString) .= x]
+  {-# INLINE toJSON #-}
+
 -- FromJSONKey
 -- --------------------------------------------------------------------
 
@@ -500,6 +542,12 @@ instance FromJSONKey T.Text where
   parseJSONKey = return . textFromJSString
   {-# INLINE parseJSONKey #-}
 
+instance FromJSONKey Char where
+  parseJSONKey txt = if JSS.length txt == 1
+    then return (JSS.head txt)
+    else fail ("Expected string of length one for Char, got one of length " ++ show (JSS.length txt))
+  {-# INLINE parseJSONKey #-}
+
 -- ToJSONKey
 -- --------------------------------------------------------------------
 
@@ -513,4 +561,8 @@ instance ToJSONKey String where
 
 instance ToJSONKey T.Text where
   toJSONKey = return . textToJSString
+  {-# INLINE toJSONKey #-}
+
+instance ToJSONKey Char where
+  toJSONKey ch = toJSONKey [ch]
   {-# INLINE toJSONKey #-}

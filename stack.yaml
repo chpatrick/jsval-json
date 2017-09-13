@@ -1,6 +1,7 @@
 packages:
 - .
-extra-deps: []
+extra-deps:
+- generic-random-1.0.0.0
 flags: {}
 extra-package-dbs: []
 
