@@ -126,4 +126,5 @@ main = do
       , SomeProxy (Proxy @(Type3 Bool))
       , SomeProxy (Proxy @(Type4 (Maybe Int)))
       , SomeProxy (Proxy @Type5)
+      , SomeProxy (Proxy @(V.Vector (Type1 Double)))
       ]
