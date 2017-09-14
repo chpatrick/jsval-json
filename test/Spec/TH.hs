@@ -19,7 +19,6 @@ toAesonOptions JS.Options{..} = Aeson.Options
 
 deriveJSON :: JS.Options -> TH.Name -> TH.Q [TH.Dec]
 deriveJSON opts name = fmap concat $ sequenceA
-  [ JS.deriveFromJSON opts name
-  , Aeson.deriveFromJSON (toAesonOptions opts) name
-  , Aeson.deriveToJSON (toAesonOptions opts) name
+  [ JS.deriveJSON opts name
+  , Aeson.deriveJSON (toAesonOptions opts) name
   ]

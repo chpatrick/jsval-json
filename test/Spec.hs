@@ -83,7 +83,6 @@ roundtripBackwards p = it (show (typeRep p)) $ QC.property $ \(x :: a) -> QC.ioP
     Left err -> fail ("Could not decode: " ++ err)
     Right x' -> return (x == x')
 
-{-
 roundtripForwards :: forall a. (Typeable a, Eq a, Aeson.FromJSON a, ToJSON a, QC.Arbitrary a, Show a) => Proxy a -> SpecWith (Arg QC.Property)
 roundtripForwards p = it (show (typeRep p)) $ QC.property $ \(x :: a) -> QC.ioProperty $ do
   s <- BSL.fromStrict . T.encodeUtf8 . textFromJSString <$> (toJSONString =<< toJSON x)
@@ -92,19 +91,14 @@ roundtripForwards p = it (show (typeRep p)) $ QC.property $ \(x :: a) -> QC.ioPr
     Right x' -> return (x == x')
 
 data SomeProxy = forall a. (Typeable a, Eq a, Aeson.ToJSON a, ToJSON a, Aeson.FromJSON a, FromJSON a, QC.Arbitrary a, Show a) => SomeProxy (Proxy a)
--}
-
-data SomeProxy = forall a. (Typeable a, Eq a, Aeson.ToJSON a, Aeson.FromJSON a, FromJSON a, QC.Arbitrary a, Show a) => SomeProxy (Proxy a)
 
 main :: IO ()
 main = do
   hspec $ do
     describe "types roundtrip backwards" $ do
       for_ types (\(SomeProxy p) -> roundtripBackwards p)
-    {-
     describe "types roundtrip forwards" $ do
       for_ types (\(SomeProxy p) -> roundtripBackwards p)
-    -}
   where
     types =
       [ SomeProxy (Proxy @())

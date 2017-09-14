@@ -103,12 +103,12 @@ module JavaScript.JSValJSON.TH
       Options(..), SumEncoding(..), defaultOptions, defaultTaggedObject, camelTo, camelTo2
 
      -- * FromJSON and ToJSON derivation
-    -- , deriveJSON
+    , deriveJSON
 
-    -- , deriveToJSON
+    , deriveToJSON
     , deriveFromJSON
 
-    -- , mkToJSON
+    , mkToJSON
     , mkParseJSON
     ) where
 
@@ -120,6 +120,7 @@ import JavaScript.JSValJSON.Internal ( (.:)
                   , Object
                   , objectLookup
                   , (.:?)
+                  , ToJSON, toJSON
                   )
 import Control.Monad       ( liftM2, return, mapM, fail )
 import Data.Bool           ( Bool(False, True), otherwise, (&&) )
@@ -129,7 +130,7 @@ import Data.Function       ( ($), (.), flip )
 import Data.Functor        ( fmap )
 import Data.List           ( (++), all, any, find, foldl, foldl'
                            , genericLength , intercalate , length, map
-                           , zip
+                           , zip, partition
                            )
 import Data.Map            ( Map )
 import Data.Maybe          ( Maybe(Nothing, Just), catMaybes )
@@ -137,8 +138,10 @@ import Language.Haskell.TH
 import Language.Haskell.TH.Syntax ( VarStrictType )
 import Prelude             ( String, (-), Integer, error
                            , splitAt, zipWith, Show(..), Eq(..), Char, id
+                           , not
                            )
 import Data.Char (toLower, isLower, isUpper)
+import Data.Traversable (sequenceA)
 #if MIN_VERSION_template_haskell(2,8,0) && !(MIN_VERSION_template_haskell(2,10,0))
 import Data.Foldable              ( foldr' )
 import qualified Data.Map as M    ( singleton )
@@ -286,7 +289,6 @@ camelTo2 c = map toLower . go2 . go1
 -- Convenience
 --------------------------------------------------------------------------------
 
-{-
 -- | Generates both 'ToJSON' and 'FromJSON' instance declarations for the given
 -- data type or data family instance constructor.
 --
@@ -302,22 +304,11 @@ deriveJSON opts name =
     liftM2 (++)
            (deriveToJSON   opts name)
            (deriveFromJSON opts name)
--}
 
 --------------------------------------------------------------------------------
 -- ToJSON
 --------------------------------------------------------------------------------
-
-{-
-{-
-TODO: Don't constrain phantom type variables.
-
-data Foo a = Foo Int
-instance (ToJSON a) ⇒ ToJSON Foo where ...
-
-The above (ToJSON a) constraint is not necessary and perhaps undesirable.
--}
-
+--
 -- | Generates a 'ToJSON' instance declaration for the given data type or
 -- data family instance constructor.
 deriveToJSON :: Options
@@ -357,7 +348,7 @@ consToValue :: Options
            -- ^ Constructors for which to generate JSON generating code.
            -> Q Exp
 
-consToValue _ [] = error $ "Javascript.JSValJSON.TH.consToValue: "
+consToValue _ [] = error $ "Data.Aeson.TH.consToValue: "
                           ++ "Not a single constructor given!"
 
 -- A single constructor is directly encoded. The constructor itself may be
@@ -372,7 +363,7 @@ consToValue opts cons = do
   where
     matches
         | allNullaryToStringTag opts && all isNullary cons =
-              [ match (conP conName []) (normalB ([|return|] `appE` conStr opts conName)) []
+              [ match (conP conName []) (normalB $ conStr opts conName) []
               | con <- cons
               , let conName = getConName con
               ]
@@ -383,7 +374,6 @@ conStr opts = appE [|_String|] . conTxt opts
 
 conTxt :: Options -> Name -> Q Exp
 conTxt opts = appE [|JSS.pack|] . conStringE opts
--}
 
 conStringE :: Options -> Name -> Q Exp
 conStringE opts = stringE . constructorTagModifier opts . nameBase
@@ -393,22 +383,27 @@ isNullary :: Con -> Bool
 isNullary (NormalC _ []) = True
 isNullary _ = False
 
-{-
 sumToValue :: Options -> Bool -> Name -> Q Exp -> Q Exp
-sumToValue opts multiCons conName expM
+sumToValue opts multiCons conName exp
     | multiCons =
         case sumEncoding opts of
-          TwoElemArray ->
-              ([|mkArray|] `appE` (listE [conStr opts conName, exp])
-          TaggedObject{tagFieldName, contentsFieldName} ->
-              [|mkObject|] `appE` listE
-                [ [|return|] `appE` infixApp [|JSS.pack tagFieldName|] [|(,)|] (conStr opts conName)
-                , infixApp (appE [|JSS.pack contentsFieldName|] [|(,)|]) [|<$>|] exp
-                ]
-          ObjectWithSingleField ->
-              [|mkObject|] `appE` listE
-                [ infixApp (conTxt opts conName) [|(,)|] exp
-                ]
+          TaggedObject{tagFieldName, contentsFieldName} -> do
+            expVar <- newName "exp"
+            doE
+              [ bindS (varP expVar) exp
+              , noBindS $ [|fmap _Object . mkObject|] `appE` listE
+                  [ tupE [[|JSS.pack tagFieldName|], conStr opts conName]
+                  , tupE [[|JSS.pack contentsFieldName|], varE expVar]
+                  ]
+              ]
+          ObjectWithSingleField -> do
+            expVar <- newName "exp"
+            doE
+              [ bindS (varP expVar) exp
+              , noBindS $ appE [|fmap _Object . mkObject|] $ listE
+                  [ tupE [conTxt opts conName, varE expVar]
+                  ]
+              ]
 
     | otherwise = exp
 
@@ -416,8 +411,8 @@ nullarySumToValue :: Options -> Bool -> Name -> Q Exp
 nullarySumToValue opts multiCons conName =
     case sumEncoding opts of
       TaggedObject{tagFieldName} ->
-          [|mkObject|] `appE` listE
-            [ infixApp [|JSS.pack tagFieldName|] [|(,)|] (conStr opts conName)
+          [|fmap _Object . mkObject|] `appE` listE
+            [ tupE [[|JSS.pack tagFieldName|], conStr opts conName]
             ]
       _ -> sumToValue opts multiCons conName [e|toJSON ([] :: [()])|]
 
@@ -435,26 +430,11 @@ argsToValue  opts multiCons (NormalC conName []) =
 argsToValue opts multiCons (NormalC conName ts) = do
     let len = length ts
     args <- mapM newName ["arg" ++ show n | n <- [1..len]]
-    js <- case [[|toJSON|] `appE` varE arg | arg <- args] of
-            -- Single argument is directly converted.
-            [e] -> return e
-            -- Multiple arguments are converted to a JSON array.
-            es  -> do
-              mv <- newName "mv"
-              let newMV = bindS (varP mv)
-                                ([|VM.unsafeNew|] `appE`
-                                  litE (integerL $ fromIntegral len))
-                  stmts = [ noBindS $
-                              [|VM.unsafeWrite|] `appE`
-                                (varE mv) `appE`
-                                  litE (integerL ix) `appE`
-                                    e
-                          | (ix, e) <- zip [(0::Integer)..] es
-                          ]
-                  ret = noBindS $ [|return|] `appE` varE mv
-              return $ [|Array|] `appE`
-                         (varE 'V.create `appE`
-                           doE (newMV:stmts++[ret]))
+    let js = case args of
+          -- Single argument is directly converted.
+          [arg] -> appE [|toJSON|] (varE arg)
+          -- Multiple arguments are converted to a JSON array.
+          _ -> appE [|array|] (listE (map (appE [|toJSON|] . varE) args))
     match (conP conName $ map varP args)
           (normalB $ sumToValue opts multiCons conName js)
           []
@@ -464,32 +444,40 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
   (True,True,[(_,st,ty)]) -> argsToValue opts multiCons (NormalC conName [(st,ty)])
   _ -> do
     args <- mapM newName ["arg" ++ show n | (_, n) <- zip ts [1 :: Integer ..]]
-    let exp = [|object|] `appE` pairs
+    let exp = do
+          pairsVar <- newName "pairs"
+          doE
+            [ bindS (varP pairsVar) pairs
+            , noBindS ([|fmap _Object . mkObject|] `appE` varE pairsVar)
+            ]
 
-        pairs | omitNothingFields opts = infixApp maybeFields
-                                                  [|(++)|]
-                                                  restFields
-              | otherwise = listE $ map toPair argCons
+        pairs | omitNothingFields opts =
+                  infixApp (infixApp [|(++)|] [|(<$>)|] maybeFields) [|(<*>)|] restFields
+              | otherwise = appE [|sequenceA|] (listE $ map toPair argCons)
 
         argCons = zip args ts
 
-        maybeFields = [|catMaybes|] `appE` listE (map maybeToPair maybes)
+        maybeFields = appE [|fmap catMaybes|] (appE [|sequenceA|] (listE (map maybeToPair maybes)))
 
-        restFields = listE $ map toPair rest
+        restFields = appE [|sequenceA|] (listE $ map toPair rest)
 
         (maybes, rest) = partition isMaybe argCons
 
-        maybeToPair (arg, (field, _, _)) =
-            infixApp (infixE (Just $ toFieldName field)
-                             [|(.=)|]
-                             Nothing)
-                     [|(<$>)|]
-                     (varE arg)
+        maybeToPair (arg, (field, _, _)) = do
+          argVar <- newName "arg"
+          doE
+            [ bindS (varP argVar) (appE [|traverse toJSON|] (varE arg))
+            , noBindS $ appE [|return|] $
+                appE (appE [|fmap|] (infixE (Just (toFieldName field)) [|(,)|] Nothing)) (varE argVar)
+            ]
 
-        toPair (arg, (field, _, _)) =
-            infixApp (toFieldName field)
-                     [|(.=)|]
-                     (varE arg)
+        toPair (arg, (field, _, _)) = do
+          argVar <- newName "arg"
+          doE
+            [ bindS (varP argVar) (appE [|toJSON|] (varE arg))
+            , noBindS $ appE [|return|] $
+                tupE [toFieldName field, varE argVar]
+            ]
 
         toFieldName field = [|JSS.pack|] `appE` fieldLabelExp opts field
 
@@ -497,19 +485,25 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
           ( normalB
           $ if multiCons
             then case sumEncoding opts of
-                   TwoElemArray -> [|toJSON|] `appE` tupE [conStr opts conName, exp]
-                   TaggedObject{tagFieldName} ->
-                       [|object|] `appE`
-                         -- TODO: Maybe throw an error in case
-                         -- tagFieldName overwrites a field in pairs.
-                         infixApp (infixApp [|JSS.pack tagFieldName|]
-                                            [|(.=)|]
-                                            (conStr opts conName))
-                                  [|(:)|]
-                                  pairs
-                   ObjectWithSingleField ->
-                       [|object|] `appE` listE
-                         [ infixApp (conTxt opts conName) [|(.=)|] exp ]
+                   TaggedObject{tagFieldName} -> do
+                     pairsVar <- newName "pairs"
+                     -- TODO: Maybe throw an error in case
+                     -- tagFieldName overwrites a field in pairs.
+                     doE
+                       [ bindS (varP pairsVar) pairs
+                       , noBindS $ appE [|fmap _Object . mkObject|] $
+                           infixApp
+                             (tupE [[|JSS.pack tagFieldName|], conStr opts conName])
+                             [|(:)|]
+                             (varE pairsVar)
+                       ]
+                   ObjectWithSingleField -> do
+                     expVar <- newName "exp"
+                     doE
+                       [ bindS (varP expVar) (appE [|toJSON|] exp)
+                       , noBindS $ appE [|fmap _Object . mkObject|] $
+                           listE [ tupE [conTxt opts conName, varE expVar] ]
+                       ]
             else exp
           ) []
 
@@ -520,9 +514,14 @@ argsToValue opts multiCons (InfixC _ conName _) = do
     match (infixP (varP al) conName (varP ar))
           ( normalB
           $ sumToValue opts multiCons conName
-          $ [|toJSON|] `appE` listE [ [|toJSON|] `appE` varE a
-                                    | a <- [al,ar]
-                                    ]
+          $ (do
+              expVarL <- newName "expl"
+              expVarR <- newName "expr"
+              doE
+                [ bindS (varP expVarL) ([|toJSON|] `appE` varE al)
+                , bindS (varP expVarR) ([|toJSON|] `appE` varE ar)
+                , noBindS ([|toJSON|] `appE` listE [varE expVarL, varE expVarR])
+                ])
           )
           []
 -- Existentially quantified constructors.
@@ -541,7 +540,7 @@ argsToValue opts multiCons (RecGadtC conNames ts _) =
 isMaybe :: (a, (b, c, Type)) -> Bool
 isMaybe (_, (_, _, AppT (ConT t) _)) = t == ''Maybe
 isMaybe _                            = False
--}
+
 
 --------------------------------------------------------------------------------
 -- FromJSON
