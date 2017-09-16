@@ -355,7 +355,7 @@ consToValue opts cons = do
   where
     matches
         | allNullaryToStringTag opts && all isNullary cons =
-              [ match (conP conName []) (normalB $ conStr opts conName) []
+              [ match (conP conName []) (normalB $ appE [|return|] (conStr opts conName)) []
               | con <- cons
               , let conName = getConName con
               ]

@@ -75,6 +75,21 @@ TH.deriveJSON
   TH.defaultOptions{TH.sumEncoding = TH.ObjectWithSingleField}
   ''Type5
 
+data Type6
+  = Type6Foo
+  | Type6Bar
+  | Type6Baz
+  deriving (Eq, Show, Generic)
+instance QC.Arbitrary Type6 where arbitrary = GA.genericArbitrary GA.uniform
+TH.deriveJSON
+  TH.defaultOptions
+    { TH.allNullaryToStringTag = True
+    , TH.constructorTagModifier = drop 5
+    , TH.sumEncoding = TH.ObjectWithSingleField
+    , TH.unwrapUnaryRecords = False
+    }
+  ''Type6
+
 roundtripBackwards :: forall a. (Typeable a, Eq a, Aeson.ToJSON a, FromJSON a, QC.Arbitrary a, Show a) => Proxy a -> SpecWith (Arg QC.Property)
 roundtripBackwards p = it (show (typeRep p)) $ QC.property $ \(x :: a) -> QC.ioProperty $ do
   let s = textToJSString (T.decodeUtf8 (BSL.toStrict (Aeson.encode x)))
@@ -127,4 +142,5 @@ main = do
       , SomeProxy (Proxy @(Type4 (Maybe Int)))
       , SomeProxy (Proxy @Type5)
       , SomeProxy (Proxy @(V.Vector (Type1 Double)))
+      , SomeProxy (Proxy @Type6)
       ]
