@@ -113,15 +113,7 @@ module JavaScript.JSValJSON.TH
     ) where
 
 import Control.Applicative ( pure, (<$>), (<*>) )
-import JavaScript.JSValJSON.Internal ( (.:)
-                  , FromJSON, parseJSON
-                  , Parser
-                  , arrayLength
-                  , Object
-                  , objectLookup
-                  , (.:?)
-                  , ToJSON, toJSON
-                  )
+import qualified JavaScript.JSValJSON as A
 import Control.Monad       ( liftM2, return, mapM, fail )
 import Data.Bool           ( Bool(False, True), otherwise, (&&) )
 import Data.Either         ( Either(Left, Right) )
@@ -322,10 +314,10 @@ deriveToJSON opts name =
   where
     fromCons :: Name -> [TyVarBndr] -> [Con] -> Maybe [Type] -> Q Dec
     fromCons name' tvbs cons mbTys = do
-        (instanceCxt, instanceType) <- buildTypeInstance name' ''ToJSON tvbs mbTys
+        (instanceCxt, instanceType) <- buildTypeInstance name' ''A.ToJSON tvbs mbTys
         instanceD (return instanceCxt)
                   (return instanceType)
-                  [ funD 'toJSON
+                  [ funD 'A.toJSON
                          [ clause []
                                   (normalB $ consToValue opts cons)
                                   []
@@ -370,7 +362,7 @@ consToValue opts cons = do
         | otherwise = [argsToValue opts True con | con <- cons]
 
 conStr :: Options -> Name -> Q Exp
-conStr opts = appE [|_String|] . conTxt opts
+conStr opts = appE [|A._String|] . conTxt opts
 
 conTxt :: Options -> Name -> Q Exp
 conTxt opts = appE [|JSS.pack|] . conStringE opts
@@ -391,7 +383,7 @@ sumToValue opts multiCons conName exp
             expVar <- newName "exp"
             doE
               [ bindS (varP expVar) exp
-              , noBindS $ [|fmap _Object . mkObject|] `appE` listE
+              , noBindS $ [|fmap A._Object . A.mkObject|] `appE` listE
                   [ tupE [[|JSS.pack tagFieldName|], conStr opts conName]
                   , tupE [[|JSS.pack contentsFieldName|], varE expVar]
                   ]
@@ -400,7 +392,7 @@ sumToValue opts multiCons conName exp
             expVar <- newName "exp"
             doE
               [ bindS (varP expVar) exp
-              , noBindS $ appE [|fmap _Object . mkObject|] $ listE
+              , noBindS $ appE [|fmap A._Object . A.mkObject|] $ listE
                   [ tupE [conTxt opts conName, varE expVar]
                   ]
               ]
@@ -411,10 +403,10 @@ nullarySumToValue :: Options -> Bool -> Name -> Q Exp
 nullarySumToValue opts multiCons conName =
     case sumEncoding opts of
       TaggedObject{tagFieldName} ->
-          [|fmap _Object . mkObject|] `appE` listE
+          [|fmap A._Object . A.mkObject|] `appE` listE
             [ tupE [[|JSS.pack tagFieldName|], conStr opts conName]
             ]
-      _ -> sumToValue opts multiCons conName [e|toJSON ([] :: [()])|]
+      _ -> sumToValue opts multiCons conName [e|A.toJSON ([] :: [()])|]
 
 -- | Generates code to generate the JSON encoding of a single constructor.
 argsToValue :: Options -> Bool -> Con -> Q Match
@@ -432,9 +424,9 @@ argsToValue opts multiCons (NormalC conName ts) = do
     args <- mapM newName ["arg" ++ show n | n <- [1..len]]
     let js = case args of
           -- Single argument is directly converted.
-          [arg] -> appE [|toJSON|] (varE arg)
+          [arg] -> appE [|A.toJSON|] (varE arg)
           -- Multiple arguments are converted to a JSON array.
-          _ -> appE [|array|] (listE (map (appE [|toJSON|] . varE) args))
+          _ -> appE [|A.array|] (listE (map (appE [|A.toJSON|] . varE) args))
     match (conP conName $ map varP args)
           (normalB $ sumToValue opts multiCons conName js)
           []
@@ -448,7 +440,7 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
           pairsVar <- newName "pairs"
           doE
             [ bindS (varP pairsVar) pairs
-            , noBindS ([|fmap _Object . mkObject|] `appE` varE pairsVar)
+            , noBindS ([|fmap A._Object . A.mkObject|] `appE` varE pairsVar)
             ]
 
         pairs | omitNothingFields opts =
@@ -466,7 +458,7 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
         maybeToPair (arg, (field, _, _)) = do
           argVar <- newName "arg"
           doE
-            [ bindS (varP argVar) (appE [|traverse toJSON|] (varE arg))
+            [ bindS (varP argVar) (appE [|traverse A.toJSON|] (varE arg))
             , noBindS $ appE [|return|] $
                 appE (appE [|fmap|] (infixE (Just (toFieldName field)) [|(,)|] Nothing)) (varE argVar)
             ]
@@ -474,7 +466,7 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
         toPair (arg, (field, _, _)) = do
           argVar <- newName "arg"
           doE
-            [ bindS (varP argVar) (appE [|toJSON|] (varE arg))
+            [ bindS (varP argVar) (appE [|A.toJSON|] (varE arg))
             , noBindS $ appE [|return|] $
                 tupE [toFieldName field, varE argVar]
             ]
@@ -491,7 +483,7 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
                      -- tagFieldName overwrites a field in pairs.
                      doE
                        [ bindS (varP pairsVar) pairs
-                       , noBindS $ appE [|fmap _Object . mkObject|] $
+                       , noBindS $ appE [|fmap A._Object . A.mkObject|] $
                            infixApp
                              (tupE [[|JSS.pack tagFieldName|], conStr opts conName])
                              [|(:)|]
@@ -500,8 +492,8 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
                    ObjectWithSingleField -> do
                      expVar <- newName "exp"
                      doE
-                       [ bindS (varP expVar) (appE [|toJSON|] exp)
-                       , noBindS $ appE [|fmap _Object . mkObject|] $
+                       [ bindS (varP expVar) (appE [|A.toJSON|] exp)
+                       , noBindS $ appE [|fmap A._Object . A.mkObject|] $
                            listE [ tupE [conTxt opts conName, varE expVar] ]
                        ]
             else exp
@@ -518,9 +510,9 @@ argsToValue opts multiCons (InfixC _ conName _) = do
               expVarL <- newName "expl"
               expVarR <- newName "expr"
               doE
-                [ bindS (varP expVarL) ([|toJSON|] `appE` varE al)
-                , bindS (varP expVarR) ([|toJSON|] `appE` varE ar)
-                , noBindS ([|toJSON|] `appE` listE [varE expVarL, varE expVarR])
+                [ bindS (varP expVarL) ([|A.toJSON|] `appE` varE al)
+                , bindS (varP expVarR) ([|A.toJSON|] `appE` varE ar)
+                , noBindS ([|A.toJSON|] `appE` listE [varE expVarL, varE expVarR])
                 ])
           )
           []
@@ -559,11 +551,11 @@ deriveFromJSON opts name =
   where
     fromCons :: Name -> [TyVarBndr] -> [Con] -> Maybe [Type] -> Q Dec
     fromCons name' tvbs cons mbTys = do
-        (instanceCxt, instanceType) <- buildTypeInstance name' ''FromJSON tvbs mbTys
+        (instanceCxt, instanceType) <- buildTypeInstance name' ''A.FromJSON tvbs mbTys
         arg <- newName "v"
         instanceD (return instanceCxt)
                   (return instanceType)
-                  [ funD 'parseJSON
+                  [ funD 'A.parseJSON
                          [ clause []
                                   (normalB $ lam1E (varP arg) (consFromJSON name' opts cons arg))
                                   []
@@ -605,7 +597,7 @@ consFromJSON tName opts cons arg = do
   where
     allNullaryMatches =
       do txt <- newName "txt"
-         appE (appE [|withString|] (stringE (nameBase tName)))
+         appE (appE [|A.withString|] (stringE (nameBase tName)))
            (lam1E (varP txt) (caseE (varE txt)
              [match wildP
                (guardedB $
@@ -639,13 +631,13 @@ consFromJSON tName opts cons arg = do
 
     parseObject f = do
       obj <- newName "obj"
-      appE (appE [|withObject|] (stringE (nameBase tName))) (lam1E (varP obj) (f obj))
+      appE (appE [|A.withObject|] (stringE (nameBase tName))) (lam1E (varP obj) (f obj))
 
     parseTaggedObject typFieldName valFieldName obj = do
       conKey <- newName "conKey"
       doE [ bindS (varP conKey)
                   (infixApp (varE obj)
-                            [|(.:)|]
+                            [|(A..:)|]
                             ([|JSS.pack|] `appE` stringE typFieldName))
           , noBindS $ parseContents conKey (Left (valFieldName, obj)) 'conNotFoundFailTaggedObject
           ]
@@ -657,7 +649,7 @@ consFromJSON tName opts cons arg = do
       doE
         [ bindS
             (varP vals)
-            (appE [|objectToList|] (varE obj))
+            (appE [|A.objectToList|] (varE obj))
         , noBindS $ caseE (varE vals)
             [ match (listP [tupP [varP conKey, varP conVal]])
                     (normalB $ parseContents conKey (Right conVal) 'conNotFoundFailObjectSingleField)
@@ -705,12 +697,12 @@ consFromJSON tName opts cons arg = do
 
 parseNullaryMatches :: Name -> Name -> Name -> ExpQ
 parseNullaryMatches tName conName valName =
-  appE (appE (appE [|withEmptyArray|] (stringE (nameBase tName))) $
+  appE (appE (appE [|A.withEmptyArray|] (stringE (nameBase tName))) $
     [|pure|] `appE` conE conName) (varE valName)
 
 parseUnaryMatches :: Name -> Name -> ExpQ
 parseUnaryMatches conName arg =
-    infixApp (conE conName) [|(<$>)|] ([|parseJSON|] `appE` varE arg)
+    infixApp (conE conName) [|(<$>)|] ([|A.parseJSON|] `appE` varE arg)
 
 parseRecord :: Options -> Name -> Name -> [VarStrictType] -> Name -> ExpQ
 parseRecord opts tName conName ts obj =
@@ -731,7 +723,7 @@ getValField :: Name -> String -> (Name -> ExpQ) -> Q Exp
 getValField obj valFieldName matches = do
   val <- newName "val"
   doE [ bindS (varP val) $ infixApp (varE obj)
-                                    [|objectLookup_|]
+                                    [|A.objectLookup_|]
                                     ([|JSS.pack|] `appE`
                                        (litE $ stringL valFieldName))
       , noBindS $ matches val
@@ -769,7 +761,7 @@ parseArgs tName opts (RecC conName ts) (Right valName) = case (unwrapUnaryRecord
   (True,[(_,st,ty)])-> parseArgs tName opts (NormalC conName [(st,ty)]) (Right valName)
   _ -> do
     obj <- newName "recObj"
-    appE (appE (appE [|withObject|] (stringE (nameBase tName))) $ lam1E (varP obj) $
+    appE (appE (appE [|A.withObject|] (stringE (nameBase tName))) $ lam1E (varP obj) $
       parseRecord opts tName conName ts obj) (varE valName)
 
 -- Infix constructors. Apart from syntax these are the same as
@@ -804,19 +796,19 @@ parseProduct :: Name -- ^ Name of the type to which the constructor belongs.
 parseProduct tName conName numArgs arg = do
   arr <- newName "arr"
   arrLen <- newName "arrLen"
-  -- List of: "parseJSON (arr `V.unsafeIndex` <IX>)"
-  let x:xs = [ infixApp [|parseJSON|] [|(=<<)|]
+  -- List of: .parseJSON (arr `V.unsafeIndex` <IX>)"
+  let x:xs = [ infixApp [|A.parseJSON|] [|(=<<)|]
                  (infixApp
                    (varE arr)
-                   [|arrayUnsafeIndex|]
+                   [|A.arrayUnsafeIndex|]
                    (litE $ integerL ix))
              | ix <- [0 .. numArgs - 1]
              ]
   appE
-    (appE (appE [|withArray|] (stringE (nameBase tName)))
+    (appE (appE [|A.withArray|] (stringE (nameBase tName)))
       (lam1E (varP arr)
         (doE
-          [ bindS (varP arrLen) (appE [|arrayLength|] (varE arr))
+          [ bindS (varP arrLen) (appE [|A.arrayLength|] (varE arr))
           , noBindS $
               condE ( infixApp (varE arrLen)
                                [|(==)|]
@@ -862,20 +854,20 @@ parseTypeMismatch tName conName expected actual =
           , actual
           ]
 
-class (FromJSON a) => LookupField a where
-    lookupField :: String -> String -> Object -> JSS.JSString -> Parser a
+class (A.FromJSON a) => LookupField a where
+    lookupField :: String -> String -> A.Object -> JSS.JSString -> A.Parser a
 
-instance OVERLAPPABLE_ (FromJSON a) => LookupField a where
+instance OVERLAPPABLE_ (A.FromJSON a) => LookupField a where
     lookupField tName rec obj key = do
-        mb <- objectLookup obj key
+        mb <- A.objectLookup obj key
         case mb of
           Nothing -> unknownFieldFail tName rec (JSS.unpack key)
-          Just v  -> parseJSON v
+          Just v  -> A.parseJSON v
 
-instance (FromJSON a) => LookupField (Maybe a) where
-    lookupField _ _ = (.:?)
+instance (A.FromJSON a) => LookupField (Maybe a) where
+    lookupField _ _ = (A..:?)
 
-unknownFieldFail :: String -> String -> String -> Parser fail
+unknownFieldFail :: String -> String -> String -> A.Parser fail
 unknownFieldFail tName rec key =
     fail $ printf "When parsing the record %s of type %s the key %s was not present."
                   rec tName key
@@ -891,7 +883,7 @@ firstElemNoStringFail :: String -> String -> Parser fail
 firstElemNoStringFail t o = fail $ printf "When parsing %s expected an Array of 2 elements where the first element is a String but got %s at the first element." t o
 -}
 
-wrongPairCountFail :: String -> String -> Parser fail
+wrongPairCountFail :: String -> String -> A.Parser fail
 wrongPairCountFail t n =
     fail $ printf "When parsing %s expected an Object with a single tag/contents pair but got %s pairs."
                   t n
@@ -901,7 +893,7 @@ noStringFail :: String -> String -> Parser fail
 noStringFail t o = fail $ printf "When parsing %s expected String but got %s." t o
 -}
 
-noMatchFail :: String -> String -> Parser fail
+noMatchFail :: String -> String -> A.Parser fail
 noMatchFail t o =
     fail $ printf "When parsing %s expected a String with the tag of a constructor but got %s." t o
 
@@ -915,17 +907,17 @@ conNotFoundFail2ElemArray t cs o =
                   t (intercalate ", " cs) o
 -}
 
-conNotFoundFailObjectSingleField :: String -> [String] -> String -> Parser fail
+conNotFoundFailObjectSingleField :: String -> [String] -> String -> A.Parser fail
 conNotFoundFailObjectSingleField t cs o =
     fail $ printf "When parsing %s expected an Object with a single tag/contents pair where the tag is one of [%s], but got %s."
                   t (intercalate ", " cs) o
 
-conNotFoundFailTaggedObject :: String -> [String] -> String -> Parser fail
+conNotFoundFailTaggedObject :: String -> [String] -> String -> A.Parser fail
 conNotFoundFailTaggedObject t cs o =
     fail $ printf "When parsing %s expected an Object with a tag field where the value is one of [%s], but got %s."
                   t (intercalate ", " cs) o
 
-parseTypeMismatch' :: String -> String -> String -> String -> Parser fail
+parseTypeMismatch' :: String -> String -> String -> String -> A.Parser fail
 parseTypeMismatch' conName tName expected actual =
     fail $ printf "When parsing the constructor %s of type %s expected %s but got %s."
                   conName tName expected actual
