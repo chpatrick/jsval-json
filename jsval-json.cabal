@@ -53,7 +53,8 @@ test-suite jsval-convert-test
     unordered-containers,
     template-haskell,
     generic-random,
-    containers
+    containers,
+    hashable
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   default-language: Haskell2010
 

@@ -7,6 +7,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Main (main) where
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Encoding as Aeson
+import qualified Data.Aeson.Types as Aeson
 import JavaScript.JSValJSON
 import qualified JavaScript.JSValJSON.TH as TH (defaultOptions, Options(..), SumEncoding(..))
 import Test.Hspec
@@ -26,6 +28,7 @@ import Data.JSString.Text
 import GHC.Generics (Generic)
 import qualified Generic.Random.Generic as GA
 import qualified Data.Map as M
+import Data.Hashable (Hashable)
 
 import qualified Spec.TH as TH
 
@@ -81,6 +84,7 @@ data Type6
   | Type6Baz
   deriving (Eq, Show, Generic)
 instance QC.Arbitrary Type6 where arbitrary = GA.genericArbitrary GA.uniform
+instance Hashable Type6
 TH.deriveJSON
   TH.defaultOptions
     { TH.allNullaryToStringTag = True
@@ -89,21 +93,44 @@ TH.deriveJSON
     , TH.unwrapUnaryRecords = False
     }
   ''Type6
+instance FromJSONKey Type6 where
+  parseJSONKey txt = parseJSON (_String txt)
+instance ToJSONKey Type6 where
+  toJSONKey v = do
+    mb <- runParser (withString "toJSONKey string" return) =<< toJSON v
+    case mb of
+      Left err -> fail err
+      Right x -> return x
 
-roundtripBackwards :: forall a. (Typeable a, Eq a, Aeson.ToJSON a, FromJSON a, QC.Arbitrary a, Show a) => Proxy a -> SpecWith (Arg QC.Property)
-roundtripBackwards p = it (show (typeRep p)) $ QC.property $ \(x :: a) -> QC.ioProperty $ do
+instance Aeson.FromJSONKey Type6 where
+  fromJSONKey = Aeson.FromJSONKeyTextParser (\txt -> Aeson.parseJSON (Aeson.String txt))
+instance Aeson.ToJSONKey Type6 where
+  toJSONKey = Aeson.toJSONKeyText f
+    where
+      f x = case Aeson.toJSON x of
+        Aeson.String txt -> txt
+        _ -> error "toJSONKey: not text"
+
+roundtripBackwards :: forall a. (Typeable a, Eq a, Aeson.ToJSON a, FromJSON a, QC.Arbitrary a, Show a) => a -> QC.Property
+roundtripBackwards x = QC.ioProperty $ do
   let s = textToJSString (T.decodeUtf8 (BSL.toStrict (Aeson.encode x)))
   mbX <- parseJSONFromString s parseJSON
   case mbX of
     Left err -> fail ("Could not decode: " ++ err)
     Right x' -> return (x == x')
 
-roundtripForwards :: forall a. (Typeable a, Eq a, Aeson.FromJSON a, ToJSON a, QC.Arbitrary a, Show a) => Proxy a -> SpecWith (Arg QC.Property)
-roundtripForwards p = it (show (typeRep p)) $ QC.property $ \(x :: a) -> QC.ioProperty $ do
+roundtripForwards :: forall a. (Typeable a, Eq a, Aeson.FromJSON a, ToJSON a, QC.Arbitrary a, Show a) => a -> QC.Property
+roundtripForwards x = QC.ioProperty $ do
   s <- BSL.fromStrict . T.encodeUtf8 . textFromJSString <$> (toJSONString =<< toJSON x)
   case Aeson.eitherDecode' s of
     Left err -> fail ("Could not decode: " ++ err)
     Right x' -> return (x == x')
+
+roundtripBackwardsQC :: forall a. (Typeable a, Eq a, Aeson.ToJSON a, FromJSON a, QC.Arbitrary a, Show a) => Proxy a -> SpecWith (Arg QC.Property)
+roundtripBackwardsQC p = it (show (typeRep p)) (QC.property (\(x :: a) -> roundtripBackwards x))
+
+roundtripForwardsQC :: forall a. (Typeable a, Eq a, Aeson.FromJSON a, ToJSON a, QC.Arbitrary a, Show a) => Proxy a -> SpecWith (Arg QC.Property)
+roundtripForwardsQC p = it (show (typeRep p)) (QC.property (\(x :: a) -> roundtripForwards x))
 
 data SomeProxy = forall a. (Typeable a, Eq a, Aeson.ToJSON a, ToJSON a, Aeson.FromJSON a, FromJSON a, QC.Arbitrary a, Show a) => SomeProxy (Proxy a)
 
@@ -111,9 +138,9 @@ main :: IO ()
 main = do
   hspec $ do
     describe "types roundtrip backwards" $ do
-      for_ types (\(SomeProxy p) -> roundtripBackwards p)
+      for_ types (\(SomeProxy p) -> roundtripBackwardsQC p)
     describe "types roundtrip forwards" $ do
-      for_ types (\(SomeProxy p) -> roundtripBackwards p)
+      for_ types (\(SomeProxy p) -> roundtripForwardsQC p)
   where
     types =
       [ SomeProxy (Proxy @())
@@ -143,4 +170,5 @@ main = do
       , SomeProxy (Proxy @Type5)
       , SomeProxy (Proxy @(V.Vector (Type1 Double)))
       , SomeProxy (Proxy @Type6)
+      , SomeProxy (Proxy @(HMS.HashMap Type6 Int))
       ]

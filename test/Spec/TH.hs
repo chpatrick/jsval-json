@@ -22,3 +22,4 @@ deriveJSON opts name = fmap concat $ sequenceA
   [ JS.deriveJSON opts name
   , Aeson.deriveJSON (toAesonOptions opts) name
   ]
+

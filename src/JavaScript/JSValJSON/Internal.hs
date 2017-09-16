@@ -7,6 +7,7 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DefaultSignatures #-}
 module JavaScript.JSValJSON.Internal where
 
 import GHCJS.Types (JSVal, JSString, JSException)
@@ -68,7 +69,7 @@ foreign import javascript unsafe "$r = $1 === null" js_isNull :: Value -> Bool
 {-# INLINE _Null #-}
 _Null :: Value
 _Null = js_null
-foreign import javascript unsafe "null" js_null :: Value
+foreign import javascript unsafe "$r = null" js_null :: Value
 
 {-# INLINE withInteger #-}
 withInteger :: Integral a => String -> (a -> Parser b) -> Value -> Parser b
@@ -341,7 +342,7 @@ parseJSONFromString s f = do
 foreign import javascript safe "$r = JSON.parse($1)" js_jsonParse :: JSString -> IO Value
 
 toJSONString :: Value -> IO JSString
-toJSONString v = js_jsonStringify(v)
+toJSONString v = js_jsonStringify v
 
 foreign import javascript safe "$r = JSON.stringify($1)" js_jsonStringify :: Value -> IO JSString
 
