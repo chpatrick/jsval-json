@@ -316,7 +316,7 @@ object :: Traversable t => t (IO Pair) -> IO Value
 object x = fmap _Object (mkObject =<< sequenceA x)
 
 {-# INLINE (.=) #-}
-(.=) :: (ToJSONKey k, ToJSON v) => k -> v -> IO Pair
+(.=) :: (ToJSON v) => JSString -> v -> IO Pair
 k .= v = do
   kj <- toJSONKey k
   vj <- toJSON v
