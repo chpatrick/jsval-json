@@ -335,9 +335,9 @@ runParser f v = runEitherT (unParser (f v))
 parseJSONFromString :: JSString -> (Value -> Parser a) -> IO (Either String a)
 parseJSONFromString s f = do
   mbVal :: Either JSException Value <- try (js_jsonParse s)
-  runEitherT $ case mbVal of
+  runEitherT $ unParser $ case mbVal of
     Left err -> fail ("couldn't parse json string: " ++ show err)
-    Right val -> unParser (f val)
+    Right val -> f val
 
 foreign import javascript safe "$r = JSON.parse($1)" js_jsonParse :: JSString -> IO Value
 
