@@ -171,6 +171,9 @@ data Options = Options
     , unwrapUnaryRecords :: Bool
       -- ^ Hide the field name when a record constructor has only one
       -- field, like a newtype.
+    , tagSingleConstructors :: Bool
+      -- ^ Encode types with a single constructor as sums,
+      -- so that `allNullaryToStringTag` and `sumEncoding` apply.
     }
 
 instance Show Options where
@@ -182,7 +185,8 @@ instance Show Options where
     "allNullaryToStringTag = " ++ show allNullaryToStringTag ++ ", " ++
     "omitNothingFields = " ++ show omitNothingFields ++ ", " ++
     "sumEncoding = " ++ show sumEncoding ++ ", " ++
-    "unwrapUnaryRecords = " ++ show unwrapUnaryRecords ++
+    "unwrapUnaryRecords = " ++ show unwrapUnaryRecords ++ ", " ++
+    "tagSingleConstructors = " ++ show tagSingleConstructors ++ ", " ++
     "}"
 
 -- | Specifies how to encode constructors of a sum datatype.
@@ -216,6 +220,7 @@ data SumEncoding =
 -- , 'omitNothingFields'       = False
 -- , 'sumEncoding'             = 'defaultTaggedObject'
 -- , 'unwrapUnaryRecords'      = False
+-- , 'tagSingleConstructors'   = False
 -- }
 -- @
 defaultOptions :: Options
@@ -226,6 +231,7 @@ defaultOptions = Options
                  , omitNothingFields       = False
                  , sumEncoding             = defaultTaggedObject
                  , unwrapUnaryRecords      = False
+                 , tagSingleConstructors   = False
                  }
 
 -- | Default 'TaggedObject' 'SumEncoding' options:
@@ -345,7 +351,7 @@ consToValue _ [] = error $ "Data.Aeson.TH.consToValue: "
 
 -- A single constructor is directly encoded. The constructor itself may be
 -- forgotten.
-consToValue opts [con] = do
+consToValue opts [con] | not (tagSingleConstructors opts) = do
     value <- newName "value"
     lam1E (varP value) $ caseE (varE value) [argsToValue opts False con]
 
@@ -586,7 +592,7 @@ consFromJSON :: Name
 consFromJSON _ _ [] _ = error $ "Javascript.JSValJSON.TH.consFromJSON: "
                               ++ "Not a single constructor given!"
 
-consFromJSON tName opts [con] arg = do
+consFromJSON tName opts [con] arg | not (tagSingleConstructors opts) = do
   parseArgs tName opts con (Right arg)
 
 consFromJSON tName opts cons arg = do

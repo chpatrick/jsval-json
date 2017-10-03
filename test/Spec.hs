@@ -75,7 +75,7 @@ data Type5
   deriving (Eq, Show, Generic)
 instance QC.Arbitrary Type5 where arbitrary = GA.genericArbitrary GA.uniform
 TH.deriveJSON
-  TH.defaultOptions{TH.sumEncoding = TH.ObjectWithSingleField}
+  TH.defaultOptions{TH.sumEncoding = TH.ObjectWithSingleField, TH.tagSingleConstructors = True}
   ''Type5
 
 data Type6
