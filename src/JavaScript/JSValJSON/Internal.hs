@@ -395,6 +395,14 @@ instance FromJSON a => FromJSON (Maybe a) where
     , Just <$> parseJSON v
     ]
   {-# INLINE parseJSON #-}
+  
+instance (FromJSON a, FromJSON b) => FromJSON (a, b) where
+  parseJSON = withArray "(a,b)" $ \x -> do
+    xs <- arrayToList x
+    case xs of
+      [a, b] -> (,) <$> parseJSON a <*> parseJSON b
+      _ -> fail "expecting 2-element list for tuple"
+  {-# INLINE parseJSON #-}
 
 instance FromJSON a => FromJSON (V.Vector a) where
   parseJSON = withArray "Vector" (arrayGenerate parseJSON V.generateM)
@@ -492,6 +500,10 @@ instance ToJSON a => ToJSON (Maybe a) where
   toJSON = \case
     Nothing -> return _Null
     Just x -> toJSON x
+  {-# INLINE toJSON #-}
+  
+instance (ToJSON a, ToJSON b) => ToJSON (a, b) where
+  toJSON (x, y) = array [toJSON x, toJSON y]
   {-# INLINE toJSON #-}
 
 instance ToJSON a => ToJSON (V.Vector a) where
