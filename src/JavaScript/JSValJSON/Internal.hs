@@ -25,6 +25,7 @@ import qualified Data.Map.Strict as Map
 import Data.Hashable (Hashable)
 import qualified Data.Text as T
 import Data.JSString.Text
+import qualified Data.HashSet as HS
 
 type Value = JSVal
 newtype Object = Object {unObject :: Value}
@@ -424,6 +425,10 @@ instance FromJSON T.Text where
   parseJSON = withString "Text" (return . textFromJSString)
   {-# INLINE parseJSON #-}
 
+instance (FromJSON a, Hashable a, Eq a) => FromJSON (HS.HashSet a) where
+  {-# INLINE parseJSON #-}
+  parseJSON = withArray "HashSet" (\x -> fmap HS.fromList (traverse parseJSON =<< arrayToList x))
+
 instance (Eq k, Hashable k, FromJSONKey k, FromJSON v) => FromJSON (HMS.HashMap k v) where
   parseJSON = withObject "HashMap" $ \obj -> do
     let
@@ -437,7 +442,6 @@ instance (Eq k, Hashable k, FromJSONKey k, FromJSON v) => FromJSON (HMS.HashMap 
             ((k, v) :) <$> loop curs'
     curs <- objectCursorNew obj
     HMS.fromList <$> loop curs
-  {-# INLINE parseJSON #-}
 
 instance (Ord k, FromJSONKey k, FromJSON v) => FromJSON (Map.Map k v) where
   parseJSON = withObject "HashMap" $ \obj -> do
@@ -452,7 +456,6 @@ instance (Ord k, FromJSONKey k, FromJSON v) => FromJSON (Map.Map k v) where
             ((k, v) :) <$> loop curs'
     curs <- objectCursorNew obj
     Map.fromList <$> loop curs
-  {-# INLINE parseJSON #-}
 
 instance (FromJSON a, FromJSON b) => FromJSON (Either a b) where
   parseJSON = withObject "Either" $ \obj -> do
@@ -524,6 +527,10 @@ instance ToJSON JSString where
 
 instance ToJSON T.Text where
   toJSON = return . _String . textToJSString
+  {-# INLINE toJSON #-}
+
+instance (Eq a, Hashable a, ToJSON a) => ToJSON (HS.HashSet a) where
+  toJSON x = array (map toJSON (HS.toList x))
   {-# INLINE toJSON #-}
 
 instance (Eq k, Hashable k, ToJSONKey k, ToJSON v) => ToJSON (HMS.HashMap k v) where
