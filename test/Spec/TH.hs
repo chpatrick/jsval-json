@@ -8,9 +8,14 @@ import Control.Monad (liftM2)
 import qualified JavaScript.JSValJSON.TH as JS
 
 toAesonOptions :: JS.Options -> Aeson.Options
-toAesonOptions JS.Options{..} = Aeson.Options
+toAesonOptions JS.Options{..} = Aeson.defaultOptions
   { Aeson.sumEncoding = toAesonSumEncoding sumEncoding
-  , ..
+  , Aeson.fieldLabelModifier = fieldLabelModifier
+  , Aeson.constructorTagModifier = constructorTagModifier
+  , Aeson.allNullaryToStringTag = allNullaryToStringTag
+  , Aeson.omitNothingFields = omitNothingFields
+  , Aeson.unwrapUnaryRecords = unwrapUnaryRecords
+  , Aeson.tagSingleConstructors = tagSingleConstructors
   }
   where
     toAesonSumEncoding = \case

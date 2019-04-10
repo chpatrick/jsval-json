@@ -11,7 +11,7 @@
 module JavaScript.JSValJSON.Internal where
 
 import GHCJS.Types (JSVal, JSString, JSException)
-import Control.Monad.Trans.Either
+import Control.Monad.Trans.Except
 import Control.Monad.Error.Class
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Foldable (toList, asum)
@@ -31,7 +31,7 @@ type Value = JSVal
 newtype Object = Object {unObject :: Value}
 newtype Array = Array {unArray :: Value}
 
-newtype Parser a = Parser {unParser :: EitherT String IO a}
+newtype Parser a = Parser {unParser :: ExceptT String IO a}
   deriving (Functor, Applicative, MonadIO, Alternative)
 
 instance Monad Parser where
@@ -328,7 +328,7 @@ k .= v = do
 -- --------------------------------------------------------------------
 
 runParser :: (Value -> Parser a) -> Value -> IO (Either String a)
-runParser f v = runEitherT (unParser (f v))
+runParser f v = runExceptT (unParser (f v))
 
 -- From string
 -- --------------------------------------------------------------------
@@ -336,7 +336,7 @@ runParser f v = runEitherT (unParser (f v))
 parseJSONFromString :: JSString -> (Value -> Parser a) -> IO (Either String a)
 parseJSONFromString s f = do
   mbVal :: Either JSException Value <- try (js_jsonParse s)
-  runEitherT $ unParser $ case mbVal of
+  runExceptT $ unParser $ case mbVal of
     Left err -> fail ("couldn't parse json string: " ++ show err)
     Right val -> f val
 
@@ -370,12 +370,15 @@ instance FromJSON () where
         else return ()
     {-# INLINE parseJSON #-}
 
+-- JavaScript counts extended characters like emoji as two characters, so use this function from Data.JSString
+foreign import javascript unsafe
+  "var l=$1.length; $r=l==1||(l==2&&(0xD800<=$1.charCodeAt(0) && $1.charCodeAt(0) <= 0xDFFF));" js_isSingleton :: JSString -> Bool
+
 instance FromJSON Char where
     parseJSON = withString "Char" $ \t -> do
-      let len = JSS.length t
-      if len == 1
+      if js_isSingleton t
         then pure $ JSS.head t
-        else fail ("Expected a string of length 1, got " ++ show len ++ ": " ++ show (JSS.unpack t))
+        else fail ("Expected a string with one code point, got " ++ show (JSS.unpack t))
     {-# INLINE parseJSON #-}
 
 instance FromJSON Int32 where
@@ -563,9 +566,9 @@ instance FromJSONKey T.Text where
   {-# INLINE parseJSONKey #-}
 
 instance FromJSONKey Char where
-  parseJSONKey txt = if JSS.length txt == 1
+  parseJSONKey txt = if js_isSingleton txt
     then return (JSS.head txt)
-    else fail ("Expected string of length one for Char, got one of length " ++ show (JSS.length txt))
+    else fail ("Expected string with one code point for Char, got one of length " ++ show (JSS.length txt))
   {-# INLINE parseJSONKey #-}
 
 -- ToJSONKey
