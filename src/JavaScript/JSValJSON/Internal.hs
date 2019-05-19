@@ -26,6 +26,8 @@ import Data.Hashable (Hashable)
 import qualified Data.Text as T
 import Data.JSString.Text
 import qualified Data.HashSet as HS
+import Data.Time
+import Data.Time.Clock.POSIX
 
 type Value = JSVal
 newtype Object = Object {unObject :: Value}
@@ -466,6 +468,23 @@ instance (FromJSON a, FromJSON b) => FromJSON (Either a b) where
       _ -> fail "Expecting object with single Left/Right key"
   {-# INLINE parseJSON #-}
 
+instance FromJSON Day where
+  parseJSON v = flip (withString "Day") v $ \s -> do
+    utcTime <- parseJSON v
+    if utctDayTime utcTime == 0
+      then return (utctDay utcTime)
+      else fail ("Invalid Day " ++ show s ++ ", got a non-0 day time: " ++ show (utctDayTime utcTime))
+
+instance FromJSON UTCTime where
+  parseJSON = withString "UTCTime" $ \s -> do
+    let millis = js_parseDate s
+    if isNaN millis
+      then fail ("Invalid UTCTime " ++ show s)
+      else do
+        return (posixSecondsToUTCTime (realToFrac millis / 1000))
+
+foreign import javascript unsafe "var date = new Date($1); $r = date.getTime();" js_parseDate :: JSString -> Double
+
 -- ToJSON
 -- --------------------------------------------------------------------
 
@@ -546,6 +565,14 @@ instance (ToJSON a, ToJSON b) => ToJSON (Either a b) where
     Left x -> object [("Left"::JSString) .= x]
     Right x -> object [("Right"::JSString) .= x]
   {-# INLINE toJSON #-}
+
+instance ToJSON UTCTime where
+  toJSON utcTime = return (_String (js_formatDate (realToFrac (utcTimeToPOSIXSeconds utcTime * 1000))))
+
+foreign import javascript unsafe "var date = new Date($1); $r = date.getISOString();" js_formatDate :: Double -> JSString
+
+instance ToJSON Day where
+  toJSON = return . _String . JSS.pack . showGregorian
 
 -- FromJSONKey
 -- --------------------------------------------------------------------

@@ -29,6 +29,7 @@ import GHC.Generics (Generic)
 import qualified Generic.Random.Generic as GA
 import qualified Data.Map as M
 import Data.Hashable (Hashable)
+import Data.Time
 
 import qualified Spec.TH as TH
 
@@ -171,4 +172,6 @@ main = do
       , SomeProxy (Proxy @(V.Vector (Type1 Double)))
       , SomeProxy (Proxy @Type6)
       , SomeProxy (Proxy @(HMS.HashMap Type6 Int))
+      , SomeProxy (Proxy @UTCTime)
+      , SomeProxy (Proxy @Day)
       ]
