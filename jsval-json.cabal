@@ -55,7 +55,8 @@ test-suite jsval-convert-test
     template-haskell,
     generic-random,
     containers,
-    hashable
+    hashable,
+    time
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   default-language: Haskell2010
 
