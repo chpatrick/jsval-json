@@ -569,7 +569,7 @@ instance (ToJSON a, ToJSON b) => ToJSON (Either a b) where
 instance ToJSON UTCTime where
   toJSON utcTime = return (_String (js_formatDate (realToFrac (utcTimeToPOSIXSeconds utcTime * 1000))))
 
-foreign import javascript unsafe "var date = new Date($1); $r = date.getISOString();" js_formatDate :: Double -> JSString
+foreign import javascript unsafe "var date = new Date($1); $r = date.toISOString();" js_formatDate :: Double -> JSString
 
 instance ToJSON Day where
   toJSON = return . _String . JSS.pack . showGregorian
