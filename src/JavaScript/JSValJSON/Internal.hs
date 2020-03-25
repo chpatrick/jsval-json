@@ -11,7 +11,7 @@
 module JavaScript.JSValJSON.Internal where
 
 import GHCJS.Types (JSVal, JSString, JSException)
-import Control.Monad.Trans.Either
+import Control.Monad.Trans.Except
 import Control.Monad.Error.Class
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Foldable (toList, asum)
@@ -33,7 +33,7 @@ type Value = JSVal
 newtype Object = Object {unObject :: Value}
 newtype Array = Array {unArray :: Value}
 
-newtype Parser a = Parser {unParser :: EitherT String IO a}
+newtype Parser a = Parser {unParser :: ExceptT String IO a}
   deriving (Functor, Applicative, MonadIO, Alternative)
 
 instance Monad Parser where
@@ -330,7 +330,7 @@ k .= v = do
 -- --------------------------------------------------------------------
 
 runParser :: (Value -> Parser a) -> Value -> IO (Either String a)
-runParser f v = runEitherT (unParser (f v))
+runParser f v = runExceptT (unParser (f v))
 
 -- From string
 -- --------------------------------------------------------------------
@@ -338,7 +338,7 @@ runParser f v = runEitherT (unParser (f v))
 parseJSONFromString :: JSString -> (Value -> Parser a) -> IO (Either String a)
 parseJSONFromString s f = do
   mbVal :: Either JSException Value <- try (js_jsonParse s)
-  runEitherT $ unParser $ case mbVal of
+  runExceptT $ unParser $ case mbVal of
     Left err -> fail ("couldn't parse json string: " ++ show err)
     Right val -> f val
 

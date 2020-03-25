@@ -26,7 +26,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.HashMap.Strict as HMS
 import Data.JSString.Text
 import GHC.Generics (Generic)
-import qualified Generic.Random.Generic as GA
+import qualified Generic.Random as GA
 import qualified Data.Map as M
 import Data.Hashable (Hashable)
 import Data.Time
