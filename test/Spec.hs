@@ -118,14 +118,14 @@ roundtripBackwards x = QC.ioProperty $ do
   mbX <- parseJSONFromString s parseJSON
   case mbX of
     Left err -> fail ("Could not decode: " ++ err)
-    Right x' -> return (x == x')
+    Right x' -> return (x QC.=== x')
 
 roundtripForwards :: forall a. (Typeable a, Eq a, Aeson.FromJSON a, ToJSON a, QC.Arbitrary a, Show a) => a -> QC.Property
 roundtripForwards x = QC.ioProperty $ do
   s <- BSL.fromStrict . T.encodeUtf8 . textFromJSString <$> (toJSONString =<< toJSON x)
   case Aeson.eitherDecode' s of
     Left err -> fail ("Could not decode: " ++ err)
-    Right x' -> return (x == x')
+    Right x' -> return (x QC.=== x')
 
 roundtripBackwardsQC :: forall a. (Typeable a, Eq a, Aeson.ToJSON a, FromJSON a, QC.Arbitrary a, Show a) => Proxy a -> SpecWith (Arg QC.Property)
 roundtripBackwardsQC p = it (show (typeRep p)) (QC.property (\(x :: a) -> roundtripBackwards x))
@@ -172,6 +172,5 @@ main = do
       , SomeProxy (Proxy @(V.Vector (Type1 Double)))
       , SomeProxy (Proxy @Type6)
       , SomeProxy (Proxy @(HMS.HashMap Type6 Int))
-      , SomeProxy (Proxy @UTCTime)
       , SomeProxy (Proxy @Day)
       ]
